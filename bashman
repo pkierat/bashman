@@ -13,7 +13,7 @@ _help_() {
 	Available commands:
 	
 	    help                   Shows help.
-	    load [collection]      Loads a given Postman collection file
+	    col [collection]       Loads a given Postman collection file
 	                           or reloads the current one.
 	    env [environment]      Loads a given Postman environment file
 	                           or reloads the current one.
@@ -32,7 +32,7 @@ _help_() {
 	END_OF_HELP
 }
 
-_load_() {
+_col_() {
     local collection=${1:-${BM_COLLECTION}}
     [[ -z "${collection}" ]] && { echo "No collection selected." >&2; return 2; }
     [[ -f "${collection}" && -r "${collection}" ]] || { echo "File not found or not readable." >&2; return 1; }
@@ -49,7 +49,7 @@ _env_() {
     source <(jq -L ${BASHMAN_HOME} -r -f ${BASHMAN_HOME}/env.jq < "${env}")
     BM_ENV="${env}"
     
-    [[ -n "${BM_COLLECTION}" ]] && _load_ "${BM_COLLECTION}"
+    [[ -n "${BM_COLLECTION}" ]] && _col_ "${BM_COLLECTION}"
     [[ -n "${BM_ITEM}" ]] && _item_ "${BM_ITEM}"
 }
 
@@ -103,10 +103,10 @@ _run_() {
 }
 
 _comp_commands_() {
-    echo -n "env help item load run" | xargs -n1 | fzf -1 -0 -q "${*}"
+    echo -n "col env help item run" | xargs -n1 | fzf -1 -0 -q "${*}"
 }
 
-_comp_load_() {
+_comp_col_() {
     find ${BASHMAN_PATH//:/ } -name '*.postman_collection.json' \
         | sed -e "s#^${PWD}##" \
         | fzf -1 -0 -q "${*}"
@@ -133,7 +133,7 @@ _complete_() {
     
     if [[ ${#line} -gt ${#cmd} ]]; then
         case "${cmd}" in
-            load|env|item|run)
+            col|collection|env|item|run)
                 READLINE_LINE="${cmd} $(_comp_${cmd}_ ${args})"
                 READLINE_POINT=${#READLINE_LINE}
                 ;;
@@ -157,7 +157,7 @@ _init_() {
     [[ -r ${HOME}/.config/bashman/config ]] && source ${HOME}/.config/bashman/config
     [[ -r ./.bashman_config ]] && source ./.bashman_config
     [[ -n "${BM_ENV}" && -r "${BM_ENV}" ]] && _env_ "${BM_ENV}"
-    [[ -n "${BM_COLLECTION}" && -r "${BM_COLLECTION}" ]] && _load_ "${BM_COLLECTION}"
+    [[ -n "${BM_COLLECTION}" && -r "${BM_COLLECTION}" ]] && _col_ "${BM_COLLECTION}"
     [[ -n "${BM_ITEM}" && -r "${BM_ITEM}" ]] && _item_ "${BM_ITEM}"
 }
 
@@ -180,8 +180,8 @@ while read -e -p "$(_prompt_)" -a CMDLINE; do
         env)
             _env_ "${ARGS[@]}"
             ;;
-        load)
-            _load_ "${ARGS[@]}"
+        col)
+            _col_ "${ARGS[@]}"
             ;;
         item)
             _item_ "${ARGS[@]}"
