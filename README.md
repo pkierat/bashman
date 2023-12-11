@@ -23,7 +23,7 @@ curl.
 
 ```
 $ cd bashman
-$ ./bashman.sh
+$ ./bashman
 ```
 
 ## Use
