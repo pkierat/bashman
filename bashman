@@ -35,7 +35,7 @@ _help_() {
 _load_() {
     local collection=${1:-${BM_COLLECTION}}
     [[ -z "${collection}" ]] && { echo "No collection selected." >&2; return 2; }
-    [[ -f "${collection}" && -r "${collection}" ]] || { echo "Access denied." >&2; return 1; }
+    [[ -f "${collection}" && -r "${collection}" ]] || { echo "File not found or not readable." >&2; return 1; }
     source <(jq -L ${BASHMAN_HOME} -r -f ${BASHMAN_HOME}/collection.jq < ${collection})
     BM_COLLECTION="${collection}"
 }
@@ -44,7 +44,7 @@ _env_() {
     local env=${1:-${BM_ENV}}
 
     [[ -z "${env}" ]] && { echo "No environment selected." >&2; return 2; }
-    [[ -f "${env}" && -r "${env}" ]] || { echo "Access denied." >&2; return 1; }
+    [[ -f "${env}" && -r "${env}" ]] || { echo "File not found or nor readable." >&2; return 1; }
 
     source <(jq -L ${BASHMAN_HOME} -r -f ${BASHMAN_HOME}/env.jq < "${env}")
     BM_ENV="${env}"
@@ -54,10 +54,10 @@ _env_() {
 }
 
 _item_() {
-    local item=${1:-}
+    local item=${1:-${BM_ITEM}}
     [[ -z "${item}" ]] && { echo "No item selected." >&2; return 2; }
 
-    declare -F | grep -q "${item}" || { echo "item: Item not found." >&2; return 1; }
+    declare -F | grep -q "${item}" || { echo "Item not found." >&2; return 1; }
     
     unset BM_NAME BM_METHOD BM_HEADER BM_BODY BM_URL
     unset BM_RESPONSE_BODY BM_RESPONSE_META BM_RESPONSE_CODE
@@ -67,8 +67,8 @@ _item_() {
 
 _run_() {
     if declare -F | grep -q "${1}"; then
-        shift
         _item_ "${1}"
+        shift
     fi 
 
     local auth headers response
