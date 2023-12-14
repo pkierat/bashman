@@ -1,4 +1,6 @@
 include "common" ;
+( "#!/usr/bin/env bash\n" )
++ "\n" +
 (
     "BM_ENV_NAME=" + (.name | @sh) + "\n"
 )

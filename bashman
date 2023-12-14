@@ -5,6 +5,7 @@ set -o emacs
 BASHMAN_HOME="$(cd $(dirname $(realpath $0)) && pwd)"
 BASHMAN_HISTORY="${HOME}/.bashman_history"
 BASHMAN_PATH=${BASHMAN_PATH:-.}
+BASHMAN_EDITOR=${BASHMAN_EDITOR:-${SELECTED_EDITOR:-${EDITOR:-vim}}}
 
 _help_() {
     cat <<-END_OF_HELP
@@ -32,22 +33,51 @@ _help_() {
 	END_OF_HELP
 }
 
+_load_() {
+    local type=${1}   # environment or collection
+    local -n var=${2}
+    shift 2
+
+    local -A opts
+    while [[ ${1} = -* ]]; do
+        case "${1}" in
+            -e|--edit)  opts[edit]=1; shift ;;
+            -w|--write) opts[write]=1; shift ;;
+        esac
+    done
+
+    local file="${1:-${var}}"
+
+    [[ -z "${file}" ]] && { echo "No ${type} selected." >&2; return 2; }
+    [[ -f "${file}" && -r "${file}" ]] || { echo "File not found or not readable." >&2; return 1; }
+
+    temp=$(mktemp)
+    if [[ ${file} = *.json ]]; then
+        jq -L "${BASHMAN_HOME}" -r -f "${BASHMAN_HOME}/${type}.jq" < "${file}" > "${temp}"
+    else
+        cat < "${file}" > "${temp}"
+    fi
+
+    if [[ ${opts[edit]} ]]; then
+        ${BASHMAN_EDITOR} "${temp}"
+    fi
+
+    source "${temp}"
+   
+    if [[ ${opts[write]} ]]; then
+        file="${file%.json}.sh"
+        cat "${temp}" > "${file}"
+    fi
+ 
+    var="${file}"
+}
+
 _col_() {
-    local collection=${1:-${BM_COLLECTION}}
-    [[ -z "${collection}" ]] && { echo "No collection selected." >&2; return 2; }
-    [[ -f "${collection}" && -r "${collection}" ]] || { echo "File not found or not readable." >&2; return 1; }
-    source <(jq -L ${BASHMAN_HOME} -r -f ${BASHMAN_HOME}/collection.jq < ${collection})
-    BM_COLLECTION="${collection}"
+    _load_ collection BM_COLLECTION "${@}"
 }
 
 _env_() {
-    local env=${1:-${BM_ENV}}
-
-    [[ -z "${env}" ]] && { echo "No environment selected." >&2; return 2; }
-    [[ -f "${env}" && -r "${env}" ]] || { echo "File not found or nor readable." >&2; return 1; }
-
-    source <(jq -L ${BASHMAN_HOME} -r -f ${BASHMAN_HOME}/env.jq < "${env}")
-    BM_ENV="${env}"
+    _load_ environment BM_ENV "${@}" 
     
     [[ -n "${BM_COLLECTION}" ]] && _col_ "${BM_COLLECTION}"
     [[ -n "${BM_ITEM}" ]] && _item_ "${BM_ITEM}"
@@ -102,28 +132,32 @@ _run_() {
     cat <<< "${BM_RESPONSE_BODY}"
 }
 
-_comp_commands_() {
-    echo -n "col env help item run" | xargs -n1 | fzf -1 -0 -q "${*}"
+_comp_cmd_() {
+    sed -e 's/ /\n/g' <<< "col env help item run" | fzf -e -1 -0 -q "${1}"
+}
+
+_comp_load_() {
+    local type="${1}"; shift
+    cat \
+        <(sed -e 's/ /\n/g' <<< "-e --edit -w --write") \
+        <(find ${BASHMAN_PATH//:/ } -name "*.postman_${type}.*" | sed -e "s#^${PWD}##") \
+        | fzf --tac +s -1 -0 -q "${1}"
 }
 
 _comp_col_() {
-    find ${BASHMAN_PATH//:/ } -name '*.postman_collection.json' \
-        | sed -e "s#^${PWD}##" \
-        | fzf -1 -0 -q "${*}"
+    _comp_load_ collection "${@}"
 }
 
 _comp_env_() {
-    find ${BASHMAN_PATH//:/ } -name '*.postman_environment.json' \
-        | sed -e "s#^${PWD}##" \
-        | fzf -1 -0 -q "${*}"
+    _comp_load_ environment "${@}"
 }
 
 _comp_item_() {
-    echo $(declare -F | awk '{print $3}' | grep -v '^_' | fzf -1 -0 -q "${*}")
+    declare -F | awk '{print $3}' | grep -v '^_' | fzf -1 -0 -q "${1}"
 }
 
 _comp_run_() {
-    echo $(declare -F | awk '{print $3}' | grep -v '^_' | fzf -1 -0 -q "${*}")
+    declare -F | awk '{print $3}' | grep -v '^_' | fzf -1 -0 -q "${1}"
 }
 
 _complete_() {
@@ -131,21 +165,21 @@ _complete_() {
     local cmd="${line%% *}"
     local args="${line#* }"
     
-    if [[ ${#line} -gt ${#cmd} ]]; then
+    if [[ ${#line} -le ${#cmd} ]]; then
+        local comp="$(_comp_cmd_ ${cmd})"
+        if [[ -n ${comp} ]]; then
+            READLINE_LINE="${comp} "
+            READLINE_POINT=${#READLINE_LINE}
+        fi
+    else
         case "${cmd}" in
-            col|collection|env|item|run)
-                READLINE_LINE="${cmd} $(_comp_${cmd}_ ${args})"
+            col|env|item|run)
+                READLINE_LINE="${line% *} $(_comp_${cmd}_ "${args##* }") "
                 READLINE_POINT=${#READLINE_LINE}
                 ;;
             run|help)
                 ;;
         esac
-    else
-        local comp="$(_comp_commands_ ${cmd})"
-        if [[ -n ${comp} ]]; then
-            READLINE_LINE="${comp} "
-            READLINE_POINT=${#READLINE_LINE}
-        fi
     fi
 }
 
