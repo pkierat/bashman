@@ -10,28 +10,84 @@ BASHMAN_EDITOR=${BASHMAN_EDITOR:-${SELECTED_EDITOR:-${EDITOR:-vim}}}
 _help_() {
     cat <<-END_OF_HELP
 	bashman - command-line interpreter of Postman collections
-	
 	Available commands:
-	
-	    help                   Shows help.
-	    col [collection]       Loads a given Postman collection file
-	                           or reloads the current one.
-	    env [environment]      Loads a given Postman environment file
-	                           or reloads the current one.
-	    item [item]	           Selects the item or reloads the current one.
-	    run [item] [args]      Makes a call based on the current state.
-	    exit/quit/CTRL+D       Exits Bashman.
-	
+	  h[elp]                       Shows help.
+	  c[ollection] [opts] [file]   Loads a given Postman collection file
+	                               or reloads the current one.
+	  e[nvironment] [opts] [file]  Loads a given Postman environment file
+	                               or reloads the current one.
+	  i[tem] [name]	               Selects the item or reloads the current one.
+	  r[un] [item] [curl_opts]     Makes a call based on the current state.
+	  exit, quit                   Exits Bashman.
 	Environment variables:
-	    
-	    BASHMAN_HOME           Directory containing all Bashman scripts
-	    BASHMAN_PATH           Comma-separated list of directories to
-	                           search for collections and environments
-	    BASHMAN_HISTORY	       Path to a file containing history of commands
-	                           (default: \${BASHMAN_HOME}/.bashman_history)
-	    
+	  BASHMAN_HOME                 Directory containing all Bashman scripts
+	  BASHMAN_PATH                 Comma-separated list of directories to
+	                               search for collections and environments
+	  BASHMAN_HISTORY	           Path to a file containing history of commands
+	                               (default: \${BASHMAN_HOME}/.bashman_history)
 	END_OF_HELP
 }
+
+## Completion
+
+_complete_cmd_() {
+    sed -e 's/ /\n/g' <<< "collection environment help item run quit" | fzf +s -1 -0 -q "^${1}"
+}
+
+_complete_load_() {
+    local type="${1}"
+    local args="${2}"
+    local last="${args##* }"
+
+    cat \
+        <(sed -e 's/ /\n/g' <<< "-e --edit -w --write") \
+        <(find ${BASHMAN_PATH//:/ } -name "*.postman_${type}.*" | sed -e "s#^${PWD}##") \
+        | fzf --tac +s -1 -0 -q "${last}"
+}
+
+_complete_collection_() {
+    _complete_load_ collection "${@}"
+}
+
+_complete_environment_() {
+    _complete_load_ environment "${@}"
+}
+
+_complete_item_() {
+    local args="${1}"
+    local last="${args## *}"
+    declare -F | awk '{print $3}' | grep -v '^_' | fzf -1 -0 -q "${last}"
+}
+
+_complete_run_() {
+    _complete_item_ "${@}"
+}
+
+_complete_() {
+    local line="${READLINE_LINE:0:${READLINE_POINT}}"
+    local cmd="${line%% *}"
+    local args="${line#* }"
+
+    if [[ ${#line} -le ${#cmd} ]]; then
+        local comp="$(_complete_cmd_ ${cmd})"
+        if [[ -n ${comp} ]]; then
+            READLINE_LINE="${comp} "
+            READLINE_POINT=${#READLINE_LINE}
+        fi
+    else
+        case "${cmd}" in
+            collection|environment|item|run)
+                local comp="$(_complete_${cmd}_ "${args}")"
+                READLINE_LINE="${line% *} ${comp:+${comp} }"
+                READLINE_POINT=${#READLINE_LINE}
+                ;;
+            help|quit)
+                ;;
+        esac
+    fi
+}
+
+## Commands
 
 _load_() {
     local type=${1}   # environment or collection
@@ -63,23 +119,23 @@ _load_() {
     fi
 
     source "${temp}"
-   
+
     if [[ ${opts[write]} ]]; then
         file="${file%.json}.sh"
         cat "${temp}" > "${file}"
     fi
- 
+
     var="${file}"
 }
 
-_col_() {
+_collection_() {
     _load_ collection BM_COLLECTION "${@}"
 }
 
-_env_() {
-    _load_ environment BM_ENV "${@}" 
-    
-    [[ -n "${BM_COLLECTION}" ]] && _col_ "${BM_COLLECTION}"
+_environment_() {
+    _load_ environment BM_ENVIRONMENT "${@}"
+
+    [[ -n "${BM_COLLECTION}" ]] && _collection_ "${BM_COLLECTION}"
     [[ -n "${BM_ITEM}" ]] && _item_ "${BM_ITEM}"
 }
 
@@ -88,7 +144,7 @@ _item_() {
     [[ -z "${item}" ]] && { echo "No item selected." >&2; return 2; }
 
     declare -F | grep -q "${item}" || { echo "Item not found." >&2; return 1; }
-    
+
     unset BM_NAME BM_METHOD BM_HEADER BM_BODY BM_URL
     unset BM_RESPONSE_BODY BM_RESPONSE_META BM_RESPONSE_CODE
 
@@ -99,22 +155,20 @@ _run_() {
     if declare -F | grep -q "${1}"; then
         _item_ "${1}"
         shift
-    fi 
+    fi
 
     local auth headers response
     case "${BM_AUTH_TYPE}" in
-        basic)
-            auth="--basic -u ${BM_AUTH_USER}:${BM_AUTH_PASS}"
-            ;;
-        digest)
-            auth="--digest -u ${BM_AUTH_USER}:${BM_AUTH_PASS}"
-            ;;
-        bearer)
-            auth="--oauth2-bearer ${BM_AUTH_PASS} -u ${BM_AUTH_USER}"
+        basic) auth="--basic -u ${BM_AUTH_USER}:${BM_AUTH_PASS}" ;;
+        digest) auth="--digest -u ${BM_AUTH_USER}:${BM_AUTH_PASS}" ;;
+        bearer) auth="--oauth2-bearer ${BM_AUTH_TOKEN}" ;;
+        apikey) auth="--header '${BM_AUTH_KEY}: ${BM_AUTH_VALUE}'" ;;
     esac
 
     headers=""
-    for header in "${!BM_HEADER[@]}"; do headers+=" --header '${header}: ${BM_HEADER[${header}]}'"; done
+    for header in "${!BM_HEADER[@]}"; do
+        headers+=" --header '${header}: ${BM_HEADER[${header}]}'"
+    done
 
     response=$(curl \
         --silent \
@@ -132,67 +186,20 @@ _run_() {
     cat <<< "${BM_RESPONSE_BODY}"
 }
 
-_comp_cmd_() {
-    sed -e 's/ /\n/g' <<< "col env help item run" | fzf -e -1 -0 -q "${1}"
-}
-
-_comp_load_() {
-    local type="${1}"; shift
-    cat \
-        <(sed -e 's/ /\n/g' <<< "-e --edit -w --write") \
-        <(find ${BASHMAN_PATH//:/ } -name "*.postman_${type}.*" | sed -e "s#^${PWD}##") \
-        | fzf --tac +s -1 -0 -q "${1}"
-}
-
-_comp_col_() {
-    _comp_load_ collection "${@}"
-}
-
-_comp_env_() {
-    _comp_load_ environment "${@}"
-}
-
-_comp_item_() {
-    declare -F | awk '{print $3}' | grep -v '^_' | fzf -1 -0 -q "${1}"
-}
-
-_comp_run_() {
-    declare -F | awk '{print $3}' | grep -v '^_' | fzf -1 -0 -q "${1}"
-}
-
-_complete_() {
-    local line="${READLINE_LINE## }"
-    local cmd="${line%% *}"
-    local args="${line#* }"
-    
-    if [[ ${#line} -le ${#cmd} ]]; then
-        local comp="$(_comp_cmd_ ${cmd})"
-        if [[ -n ${comp} ]]; then
-            READLINE_LINE="${comp} "
-            READLINE_POINT=${#READLINE_LINE}
-        fi
-    else
-        case "${cmd}" in
-            col|env|item|run)
-                READLINE_LINE="${line% *} $(_comp_${cmd}_ "${args##* }") "
-                READLINE_POINT=${#READLINE_LINE}
-                ;;
-            run|help)
-                ;;
-        esac
-    fi
-}
-
 _prompt_() {
-    echo "${BM_ENV_NAME:-[env]}:${BM_COLLECTION_NAME:-[col]}:${BM_ITEM:-[item]}:${BM_RESPONSE_CODE:-[code]}> "
+    echo "${BM_ENVIRONMENT_NAME:-[env]}:${BM_COLLECTION_NAME:-[col]}:${BM_ITEM:-[item]}:${BM_RESPONSE_CODE:-[code]}> "
+}
+
+_reload_() {
+    [[ -n "${BM_ENVIRONMENT}" && -r "${BM_ENVIRONMENT}" ]] && _environment_ "${BM_ENVIRONMENT}"
+    [[ -n "${BM_COLLECTION}" && -r "${BM_COLLECTION}" ]] && _collection_ "${BM_COLLECTION}"
+    [[ -n "${BM_ITEM}" && -r "${BM_ITEM}" ]] && _item_ "${BM_ITEM}"
 }
 
 _init_() {
     [[ -r ${HOME}/.config/bashman/config ]] && source ${HOME}/.config/bashman/config
     [[ -r ./.bashman_config ]] && source ./.bashman_config
-    [[ -n "${BM_ENV}" && -r "${BM_ENV}" ]] && _env_ "${BM_ENV}"
-    [[ -n "${BM_COLLECTION}" && -r "${BM_COLLECTION}" ]] && _col_ "${BM_COLLECTION}"
-    [[ -n "${BM_ITEM}" && -r "${BM_ITEM}" ]] && _item_ "${BM_ITEM}"
+    _reload_
 }
 
 _init_
@@ -208,31 +215,16 @@ while read -e -p "$(_prompt_)" -a CMDLINE; do
     CMD=${CMDLINE[0]}
     ARGS=("${CMDLINE[@]:1}")
     case "${CMD}" in
-        help)
-            _help_
-            ;;
-        env)
-            _env_ "${ARGS[@]}"
-            ;;
-        col)
-            _col_ "${ARGS[@]}"
-            ;;
-        item)
-            _item_ "${ARGS[@]}"
-            ;;
-        run)
-            _run_ "${ARGS[@]}"
-            ;;
-        exit|quit)
-            break
-            ;;
-        "")
-            continue
-            ;;
-        *)
-            echo "Unknown command: ${CMD}" >&2
-        esac
-        unset CMDLINE CMD ARGS
+        e|environment) _environment_ "${ARGS[@]}" ;;
+        c|collection) _collection_ "${ARGS[@]}" ;;
+        i|item) _item_ "${ARGS[@]}" ;;
+        r|run) _run_ "${ARGS[@]}" ;;
+        h|help) _help_ ;;
+        q|quit) break ;;
+        "") continue ;;
+        *) echo "Unknown command: ${CMD}" >&2 ;;
+    esac
+    unset CMDLINE CMD ARGS
 done
 
 history -w "${BASHMAN_HISTORY}"
