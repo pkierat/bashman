@@ -5,26 +5,39 @@ set -o emacs
 BASHMAN_HOME="$(cd $(dirname $(realpath $0)) && pwd)"
 BASHMAN_HISTORY="${HOME}/.bashman_history"
 BASHMAN_PATH=${BASHMAN_PATH:-.}
-BASHMAN_EDITOR=${BASHMAN_EDITOR:-${SELECTED_EDITOR:-${EDITOR:-vim}}}
+BASHMAN_EDITOR=${BASHMAN_EDITOR:-${EDITOR:-vim}}
+BASHMAN_DIFFTOOL=${BASHMAN_DIFFTOOL:-vimdiff}
 
 _help_() {
     cat <<-END_OF_HELP
-	bashman - command-line interpreter of Postman collections
+	Bashman - command-line interpreter of Postman collections
+	${nl}
 	Available commands:
-	  h[elp]                       Shows help.
+	  ?, help                      Shows help
 	  c[ollection] [opts] [file]   Loads a given Postman collection file
-	                               or reloads the current one.
+	                               or reloads the current one
 	  e[nvironment] [opts] [file]  Loads a given Postman environment file
-	                               or reloads the current one.
-	  i[tem] [name]	               Selects the item or reloads the current one.
-	  r[un] [item] [curl_opts]     Makes a call based on the current state.
-	  exit, quit                   Exits Bashman.
+	                               or reloads the current one
+	  i[tem] [name]	               Selects the item or reloads the current one
+	  r[un] [item] [curl_opts]     Makes a call based on the current state
+	  exit, quit                   Exits Bashman
+	${nl}
+	Options:
+	  -d, --diff                   Compares new and existing file side by side
+	  -e, --edit                   Edits the file before loading
+	  -w, --write                  Saves the generated file as \${file/.json/.sh}
+	${nl}
 	Environment variables:
 	  BASHMAN_HOME                 Directory containing all Bashman scripts
 	  BASHMAN_PATH                 Comma-separated list of directories to
 	                               search for collections and environments
-	  BASHMAN_HISTORY	           Path to a file containing history of commands
+	  BASHMAN_HISTORY              Path to a file containing history of commands
 	                               (default: \${BASHMAN_HOME}/.bashman_history)
+	  BASHMAN_EDITOR               Program to be used for editing
+	                               (default: \${EDITOR:-vim})
+	  BASHMAN_DIFFTOOL             Program to be used for comparing
+	                               (default: vimdiff)
+	${nl}
 	END_OF_HELP
 }
 
@@ -36,11 +49,10 @@ _complete_cmd_() {
 
 _complete_load_() {
     local type="${1}"
-    local args="${2}"
-    local last="${args##* }"
-
-    cat \
-        <(sed -e 's/ /\n/g' <<< "-e --edit -w --write") \
+    local line="${2}"
+    local last="${line##* }"
+    
+    cat <(sed -e 's/ /\n/g' <<< "-d --diff -e --edit -w --write") \
         <(find ${BASHMAN_PATH//:/ } -name "*.postman_${type}.*" | sed -e "s#^${PWD}##") \
         | fzf --tac +s -1 -0 -q "${last}"
 }
@@ -69,22 +81,22 @@ _complete_() {
     local args="${line#* }"
 
     if [[ ${#line} -le ${#cmd} ]]; then
-        local comp="$(_complete_cmd_ ${cmd})"
-        if [[ -n ${comp} ]]; then
-            READLINE_LINE="${comp} "
-            READLINE_POINT=${#READLINE_LINE}
-        fi
+        local comp="$(_complete_cmd_ ${line})"
+        READLINE_LINE="${comp:+${comp} }"
     else
         case "${cmd}" in
-            collection|environment|item|run)
-                local comp="$(_complete_${cmd}_ "${args}")"
-                READLINE_LINE="${line% *} ${comp:+${comp} }"
-                READLINE_POINT=${#READLINE_LINE}
-                ;;
-            help|quit)
-                ;;
+            c|collection) cmd=collection ;;
+            e|environment) cmd=environment ;;
+            i|item) cmd=item ;;
+            r|run) cmd=run ;;
+            ?|help) cmd=help ;;
+            q|quit) cmd=quit ;;
         esac
+        local comp="$(_complete_${cmd}_ "${line}")"
+        READLINE_LINE="${line% *} ${comp:+${comp} }"
     fi
+
+    READLINE_POINT=${#READLINE_LINE}
 }
 
 ## Commands
@@ -97,7 +109,8 @@ _load_() {
     local -A opts
     while [[ ${1} = -* ]]; do
         case "${1}" in
-            -e|--edit)  opts[edit]=1; shift ;;
+            -d|--diff)  opts[diff]=1;  shift ;;
+            -e|--edit)  opts[edit]=1;  shift ;;
             -w|--write) opts[write]=1; shift ;;
         esac
     done
@@ -108,20 +121,22 @@ _load_() {
     [[ -f "${file}" && -r "${file}" ]] || { echo "File not found or not readable." >&2; return 1; }
 
     temp=$(mktemp)
-    if [[ ${file} = *.json ]]; then
+    if [[ ${file} == *.json ]]; then
         jq -L "${BASHMAN_HOME}" -r -f "${BASHMAN_HOME}/${type}.jq" < "${file}" > "${temp}"
     else
         cat < "${file}" > "${temp}"
     fi
 
-    if [[ ${opts[edit]} ]]; then
-        ${BASHMAN_EDITOR} "${temp}"
+    if [[ ${opts[diff]} ]]; then
+        ${BASHMAN_DIFFTOOL} "${temp}" "${file%.*}.sh" || return 1
+    elif [[ ${opts[edit]} ]]; then
+        ${BASHMAN_EDITOR} "${temp}" || return 1
     fi
 
     source "${temp}"
 
     if [[ ${opts[write]} ]]; then
-        file="${file%.json}.sh"
+        file="${file%.*}.sh"
         cat "${temp}" > "${file}"
     fi
 
@@ -199,16 +214,17 @@ _reload_() {
 _init_() {
     [[ -r ${HOME}/.config/bashman/config ]] && source ${HOME}/.config/bashman/config
     [[ -r ./.bashman_config ]] && source ./.bashman_config
+
+    touch "${BASHMAN_HISTORY}"
+    history -r "${BASHMAN_HISTORY}"
+
     _reload_
+
+    bind -x '"\t":"_complete_"'
 }
 
 _init_
 _help_
-
-touch "${BASHMAN_HISTORY}"
-history -r "${BASHMAN_HISTORY}"
-
-bind -x '"\t":"_complete_"'
 
 while read -e -p "$(_prompt_)" -a CMDLINE; do
     history -s "${CMDLINE[*]}"
