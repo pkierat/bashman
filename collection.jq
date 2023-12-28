@@ -3,7 +3,7 @@ def leaf($name):
     $name + "() {\n" + ([
         "    BM_NAME=" + (.name | quote),
         "    BM_METHOD=" + (.request.method | quote),
-        "    BM_HEADER=" + "(" + ([.request.header[] | "[" + .key + "]=" + (.value | @sh)] | join(" ")) + ")",
+        "    BM_HEADER=" + ("(" + ([.request.header[] | ((.key + ": " + .value) | quote)] | join(" ")) + ")"),
         if .request | has("body") then
             "    BM_BODY=$(cat <<-END_OF_BODY\n\(((.request.body.raw | vars) + "\nEND_OF_BODY\n") | tab))"
         else

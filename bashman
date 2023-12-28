@@ -8,12 +8,18 @@ BASHMAN_PATH=${BASHMAN_PATH:-.}
 BASHMAN_EDITOR=${BASHMAN_EDITOR:-${EDITOR:-vim}}
 BASHMAN_DIFFTOOL=${BASHMAN_DIFFTOOL:-vimdiff}
 
+_greeting_() {
+	echo "Bashman - command-line interpreter of Postman collections"
+    echo ""
+    echo "Type 'help' to list the available commands and options."
+}
+
 _help_() {
     cat <<-END_OF_HELP
-	Bashman - command-line interpreter of Postman collections
 	${nl}
 	Available commands:
-	  ?, help                      Shows help
+	  h, help                      Shows help
+	  ?, status                    Shows current environment, collection etc.
 	  c[ollection] [opts] [file]   Loads a given Postman collection file
 	                               or reloads the current one
 	  e[nvironment] [opts] [file]  Loads a given Postman environment file
@@ -29,7 +35,7 @@ _help_() {
 	${nl}
 	Environment variables:
 	  BASHMAN_HOME                 Directory containing all Bashman scripts
-	  BASHMAN_PATH                 Comma-separated list of directories to
+	  BASHMAN_PATH                 Colon-separated list of directories to
 	                               search for collections and environments
 	  BASHMAN_HISTORY              Path to a file containing history of commands
 	                               (default: \${BASHMAN_HOME}/.bashman_history)
@@ -41,17 +47,29 @@ _help_() {
 	END_OF_HELP
 }
 
+## Utils
+
+_items_() {
+    declare -F | awk '{print $3}' | grep -v '^_' | {
+        if [[ -n $1 ]]; then
+            grep -q "${BM_ITEM}"
+        else
+            cat
+        fi
+    }
+}
+
 ## Completion
 
 _complete_cmd_() {
-    sed -e 's/ /\n/g' <<< "collection environment help item run quit" | fzf +s -1 -0 -q "^${1}"
+    sed -e 's/ /\n/g' <<< "collection environment help item run set status quit" | fzf +s -1 -0 -q "^${1}"
 }
 
 _complete_load_() {
     local type="${1}"
     local line="${2}"
     local last="${line##* }"
-    
+
     cat <(sed -e 's/ /\n/g' <<< "-d --diff -e --edit -w --write") \
         <(find ${BASHMAN_PATH//:/ } -name "*.postman_${type}.*" | sed -e "s#^${PWD}##") \
         | fzf --tac +s -1 -0 -q "${last}"
@@ -67,8 +85,8 @@ _complete_environment_() {
 
 _complete_item_() {
     local args="${1}"
-    local last="${args## *}"
-    declare -F | awk '{print $3}' | grep -v '^_' | fzf -1 -0 -q "${last}"
+    local last="${args##* }"
+    _items_ | fzf -1 -0 -q "${last}"
 }
 
 _complete_run_() {
@@ -89,7 +107,8 @@ _complete_() {
             e|environment) cmd=environment ;;
             i|item) cmd=item ;;
             r|run) cmd=run ;;
-            ?|help) cmd=help ;;
+            ?|status) cmd=status ;;
+            h|help) cmd=help ;;
             q|quit) cmd=quit ;;
         esac
         local comp="$(_complete_${cmd}_ "${line}")"
@@ -144,7 +163,15 @@ _load_() {
 }
 
 _collection_() {
+    unset -f $(_items_)
+
     _load_ collection BM_COLLECTION "${@}"
+
+    if [[ -n "${BM_ITEM}" ]] && _items_ "${BM_ITEM}"; then
+        _item_ "${BM_ITEM}"
+    else
+        unset BM_ITEM
+    fi
 }
 
 _environment_() {
@@ -158,7 +185,7 @@ _item_() {
     local item=${1:-${BM_ITEM}}
     [[ -z "${item}" ]] && { echo "No item selected." >&2; return 2; }
 
-    declare -F | grep -q "${item}" || { echo "Item not found." >&2; return 1; }
+    _items_ "${item}" || { echo "Item not found." >&2; return 1; }
 
     unset BM_NAME BM_METHOD BM_HEADER BM_BODY BM_URL
     unset BM_RESPONSE_BODY BM_RESPONSE_META BM_RESPONSE_CODE
@@ -167,7 +194,7 @@ _item_() {
 }
 
 _run_() {
-    if declare -F | grep -q "${1}"; then
+    if [[ -n ${1} && ${1} != -* ]] && _items_ "${1}"; then
         _item_ "${1}"
         shift
     fi
@@ -180,18 +207,15 @@ _run_() {
         apikey) auth="--header '${BM_AUTH_KEY}: ${BM_AUTH_VALUE}'" ;;
     esac
 
-    headers=""
-    for header in "${!BM_HEADER[@]}"; do
-        headers+=" --header '${header}: ${BM_HEADER[${header}]}'"
-    done
-
     response=$(curl \
         --silent \
         --write-out '\n%{json}' \
         --location \
         --request "${BM_METHOD}" "${BM_URL}" \
+        --header @<(for header in "${BM_HEADER[@]}"; do echo "${header}"; done) \
         ${auth:-} \
         ${auth## } \
+        --data "${BM_BODY}" \
         "${@}")
 
     BM_RESPONSE_META=$(tail -n 1 <<< "${response}")
@@ -201,8 +225,20 @@ _run_() {
     cat <<< "${BM_RESPONSE_BODY}"
 }
 
+_status_() {
+    echo ""
+    echo "Environment: ${BM_ENVIRONMENT_NAME:-[undefined]}"
+    echo "Collection:  ${BM_COLLECTION_NAME:-[undefined]}"
+    echo "Item:        ${BM_ITEM:-[undefined]}"
+    echo ""
+}
+
 _prompt_() {
-    echo "${BM_ENVIRONMENT_NAME:-[env]}:${BM_COLLECTION_NAME:-[col]}:${BM_ITEM:-[item]}:${BM_RESPONSE_CODE:-[code]}> "
+    case "${BM_RESPONSE_CODE}" in
+        [23][0-9][0-9]) BM_RESPONSE_CODE="\e[92m${BM_RESPONSE_CODE}\e[0m"; ;;
+        [45][0-9][0-9]) BM_RESPONSE_CODE="\e[91m${BM_RESPONSE_CODE}\e[0m"; ;;
+    esac
+    echo -en "\e[33m${BM_RESPONSE_CODE:-???}\e[0m> "
 }
 
 _reload_() {
@@ -224,7 +260,8 @@ _init_() {
 }
 
 _init_
-_help_
+_greeting_
+_status_
 
 while read -e -p "$(_prompt_)" -a CMDLINE; do
     history -s "${CMDLINE[*]}"
@@ -235,6 +272,9 @@ while read -e -p "$(_prompt_)" -a CMDLINE; do
         c|collection) _collection_ "${ARGS[@]}" ;;
         i|item) _item_ "${ARGS[@]}" ;;
         r|run) _run_ "${ARGS[@]}" ;;
+        s|set) declare -- "${ARGS[*]}" ;;
+        x|exec) eval "${ARGS[*]}" ;;
+        ?|status) _status_ ;;
         h|help) _help_ ;;
         q|quit) break ;;
         "") continue ;;
