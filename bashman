@@ -272,7 +272,7 @@ while read -e -p "$(_prompt_)" -a CMDLINE; do
         c|collection) _collection_ "${ARGS[@]}" ;;
         i|item) _item_ "${ARGS[@]}" ;;
         r|run) _run_ "${ARGS[@]}" ;;
-        s|set) declare -- "${ARGS[*]}" ;;
+        s|set) declare -- "${ARGS[@]}" ;;
         x|exec) eval "${ARGS[*]}" ;;
         ?|status) _status_ ;;
         h|help) _help_ ;;

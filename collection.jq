@@ -3,7 +3,7 @@ def leaf($name):
     $name + "() {\n" + ([
         "    BM_NAME=" + (.name | quote),
         "    BM_METHOD=" + (.request.method | quote),
-        "    BM_HEADER=" + ("(" + ([.request.header[] | ((.key + ": " + .value) | quote)] | join(" ")) + ")"),
+        "    BM_HEADER=" + ("(" + ([.request.header[] | ((.key + ": " + .value) | vars | quote)] | join(" ")) + ")"),
         if .request | has("body") then
             "    BM_BODY=$(cat <<-END_OF_BODY\n\(((.request.body.raw | vars) + "\nEND_OF_BODY\n") | tab))"
         else
@@ -50,7 +50,7 @@ def item($prefix):
         + "BM_AUTH_KEY=" + (.auth.apikey[] | select(.key == "key") | .value | vars | quote) + "\n"
         + "BM_AUTH_VALUE=" + (.auth.apikey[] | select(.key == "value") | .value | vars | quote) + "\n"
      else
-        empty
+        ""
      end)
 )
 + "\n" +
