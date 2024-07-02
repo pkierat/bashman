@@ -3,7 +3,7 @@
 set -o emacs
 
 BASHMAN_HOME="$(cd $(dirname $(realpath $0)) && pwd)"
-BASHMAN_HISTORY="${HOME}/.bashman_history"
+BASHMAN_HISTORY="${PWD}/.bashman_history"
 BASHMAN_PATH=${BASHMAN_PATH:-.}
 BASHMAN_EDITOR=${BASHMAN_EDITOR:-${EDITOR:-vim}}
 BASHMAN_DIFFTOOL=${BASHMAN_DIFFTOOL:-vimdiff}
@@ -18,31 +18,34 @@ _help_() {
     cat <<-END_OF_HELP
 	${nl}
 	Available commands:
-	  h, help                      Shows help
-	  ?, status                    Shows current environment, collection etc.
-	  c[ollection] [opts] [file]   Loads a given Postman collection file
-	                               or reloads the current one
-	  e[nvironment] [opts] [file]  Loads a given Postman environment file
-	                               or reloads the current one
-	  i[tem] [name]	               Selects the item or reloads the current one
-	  r[un] [item] [curl_opts]     Makes a call based on the current state
-	  exit, quit                   Exits Bashman
+	  help                        Shows help
+	  status                      Shows current environment, collection etc.
+	  collection [opts] [file]    Loads a given Postman collection file
+	                                 or reloads the current one
+	  environment [opts] [file]   Loads a given Postman environment file
+	                              or reloads the current one
+	  item [name]                 Selects the item or reloads the current one
+	  run [item] [curl_opts]      Makes a call based on the current state
+	  get VAR ...                 Shows the values of the environment variables
+	  set VAR=VAL ...             Sets the values of the environment variables
+	  exec command ...            Executes an arbitrary Bash command
+	  quit                        Exits Bashman
 	${nl}
 	Options:
-	  -d, --diff                   Compares new and existing file side by side
-	  -e, --edit                   Edits the file before loading
-	  -w, --write                  Saves the generated file as \${file/.json/.sh}
+	  -d, --diff                  Compares new and existing file side by side
+	  -e, --edit                  Edits the file before loading
+	  -w, --write                 Saves the generated file as \${file/.json/.sh}
 	${nl}
 	Environment variables:
-	  BASHMAN_HOME                 Directory containing all Bashman scripts
-	  BASHMAN_PATH                 Colon-separated list of directories to
-	                               search for collections and environments
-	  BASHMAN_HISTORY              Path to a file containing history of commands
-	                               (default: \${BASHMAN_HOME}/.bashman_history)
-	  BASHMAN_EDITOR               Program to be used for editing
-	                               (default: \${EDITOR:-vim})
-	  BASHMAN_DIFFTOOL             Program to be used for comparing
-	                               (default: vimdiff)
+	  BASHMAN_HOME                Directory containing all Bashman scripts
+	  BASHMAN_PATH                Colon-separated list of directories to
+	                              search for collections and environments
+	  BASHMAN_HISTORY             Path to a file containing history of commands
+	                              (default: \${BASHMAN_HOME}/.bashman_history)
+	  BASHMAN_EDITOR              Program to be used for editing
+	                              (default: \${EDITOR:-vim})
+	  BASHMAN_DIFFTOOL            Program to be used for comparing
+	                              (default: vimdiff)
 	${nl}
 	END_OF_HELP
 }
@@ -89,6 +92,14 @@ _complete_item_() {
     _items_ | fzf -1 -0 -q "${last}"
 }
 
+_complete_set_() {
+    local var
+    local args="${1}"
+    local last="${args##* }"
+    echo ">>>${last}<<<" >&2
+    for var in "${!BM_@}"; do echo "${var}"; done | fzf -1 -0 -q "${last}"
+}
+
 _complete_run_() {
     _complete_item_ "${@}"
 }
@@ -97,22 +108,31 @@ _complete_() {
     local line="${READLINE_LINE:0:${READLINE_POINT}}"
     local cmd="${line%% *}"
     local args="${line#* }"
+    local suffix=" "
 
     if [[ ${#line} -le ${#cmd} ]]; then
         local comp="$(_complete_cmd_ ${line})"
-        READLINE_LINE="${comp:+${comp} }"
+        if [[ ${comp:-''} ]]; then
+            READLINE_LINE="${comp}${suffix}"
+        fi
     else
         case "${cmd}" in
             c|collection) cmd=collection ;;
             e|environment) cmd=environment ;;
             i|item) cmd=item ;;
             r|run) cmd=run ;;
+            g|get) cmd=set; ;;
+            s|set) cmd=set; suffix="=" ;;
             ?|status) cmd=status ;;
             h|help) cmd=help ;;
             q|quit) cmd=quit ;;
         esac
-        local comp="$(_complete_${cmd}_ "${line}")"
-        READLINE_LINE="${line% *} ${comp:+${comp} }"
+        if declare -f _complete_${cmd}_ >/dev/null; then
+            local comp="$(_complete_${cmd}_ "${line}")"
+            if [[ ${comp:-''} ]]; then
+                READLINE_LINE="${line% *} ${comp}${suffix}"
+            fi
+        fi
     fi
 
     READLINE_POINT=${#READLINE_LINE}
@@ -226,19 +246,31 @@ _run_() {
 }
 
 _status_() {
-    echo ""
-    echo "Environment: ${BM_ENVIRONMENT_NAME:-[undefined]}"
-    echo "Collection:  ${BM_COLLECTION_NAME:-[undefined]}"
-    echo "Item:        ${BM_ITEM:-[undefined]}"
-    echo ""
-}
-
-_prompt_() {
     case "${BM_RESPONSE_CODE}" in
         [23][0-9][0-9]) BM_RESPONSE_CODE="\e[92m${BM_RESPONSE_CODE}\e[0m"; ;;
         [45][0-9][0-9]) BM_RESPONSE_CODE="\e[91m${BM_RESPONSE_CODE}\e[0m"; ;;
     esac
-    echo -en "\e[33m${BM_RESPONSE_CODE:-???}\e[0m> "
+
+    echo ""
+    echo -e "Environment:   ${BM_ENVIRONMENT_NAME:-[n/a]}"
+    echo -e "Collection:    ${BM_COLLECTION_NAME:-[n/a]}"
+    echo -e "Item:          ${BM_ITEM:-[n/a]}"
+    echo -e "Last response: ${BM_RESPONSE_CODE:-[n/a]}"
+    echo ""
+}
+
+_get_() {
+    eval "declare -p -- ${@}" | sed 's/declare \(-[^ ]* *\)*//'
+}
+
+_set_() {
+    eval "declare -- ${@}"
+}
+
+_prompt_() {
+    local var_name=$1
+    _status_
+    read -e -p "> " -a "${var_name}"
 }
 
 _reload_() {
@@ -261,9 +293,8 @@ _init_() {
 
 _init_
 _greeting_
-_status_
 
-while read -e -p "$(_prompt_)" -a CMDLINE; do
+while _prompt_ CMDLINE; do
     history -s "${CMDLINE[*]}"
     CMD=${CMDLINE[0]}
     ARGS=("${CMDLINE[@]:1}")
@@ -272,11 +303,13 @@ while read -e -p "$(_prompt_)" -a CMDLINE; do
         c|collection) _collection_ "${ARGS[@]}" ;;
         i|item) _item_ "${ARGS[@]}" ;;
         r|run) _run_ "${ARGS[@]}" ;;
-        s|set) declare -- "${ARGS[@]}" ;;
+        g|get) _get_ "${ARGS[@]}";;
+        s|set) _set_ "${ARGS[@]}";;
         x|exec) eval "${ARGS[*]}" ;;
         ?|status) _status_ ;;
         h|help) _help_ ;;
         q|quit) break ;;
+        *=*) _set_ "${CMDLINE[@]}" ;;
         "") continue ;;
         *) echo "Unknown command: ${CMD}" >&2 ;;
     esac
