@@ -11,7 +11,10 @@ BASHMAN_DIFFTOOL=${BASHMAN_DIFFTOOL:-vimdiff}
 _greeting_() {
 	echo "Bashman - command-line interpreter of Postman collections"
     echo ""
-    echo "Type 'help' to list the available commands and options."
+    echo "Type 'help' or use <TAB> to see the available commands and options."
+    echo ""
+    echo "Editor:        ${BASHMAN_EDITOR}"
+    echo "Diff tool:     ${BASHMAN_DIFFTOOL}"
 }
 
 _help_() {
@@ -62,10 +65,20 @@ _items_() {
     }
 }
 
+_check_deps_() {
+    which curl                   >/dev/null || { echo "curl not found. See: https://curl.se/" >&2; exit 1; }
+    which jq                     >/dev/null || { echo "jq not found. See: https://jqlang.github.io/jq/" >&2; exit 1; }
+    which fzf                    >/dev/null || { echo "fzf not found. See: https://junegunn.github.io/fzf/" >&2; exit 1; }
+    which ${BASHMAN_EDITOR% *}   >/dev/null || { echo "${BASHMAN_EDITOR} not found." >&2; exit 1; }
+    which ${BASHMAN_DIFFTOOL% *} >/dev/null || { echo "${BASHMAN_DIFFTOOL} not found." >&2; exit 1; }
+}
+
+_fzf_() { fzf --tac --cycle +s -1 -0 -q "$1"; }
+
 ## Completion
 
 _complete_cmd_() {
-    sed -e 's/ /\n/g' <<< "collection environment help item run set status quit" | fzf +s -1 -0 -q "^${1}"
+    sed -e 's/ /\n/g' <<< "collection environment help item run get set status quit" | _fzf_ "^${1}"
 }
 
 _complete_load_() {
@@ -73,9 +86,11 @@ _complete_load_() {
     local line="${2}"
     local last="${line##* }"
 
-    cat <(sed -e 's/ /\n/g' <<< "-d --diff -e --edit -w --write") \
-        <(find ${BASHMAN_PATH//:/ } -name "*.postman_${type}.*" | sed -e "s#^${PWD}##") \
-        | fzf --tac +s -1 -0 -q "${last}"
+    if [[ ${last} == -* ]]; then
+        sed -e 's/ /\n/g' <<< "-d --diff -e --edit -w --write" | _fzf_ "^${last}"
+    else
+        find ${BASHMAN_PATH//:/ } -name "*.postman_${type}.*" | sed -e "s#^${PWD}##" | _fzf_ "${last}"
+    fi
 }
 
 _complete_collection_() {
@@ -89,15 +104,14 @@ _complete_environment_() {
 _complete_item_() {
     local args="${1}"
     local last="${args##* }"
-    _items_ | fzf -1 -0 -q "${last}"
+    _items_ | _fzf_ "${last}"
 }
 
 _complete_set_() {
     local var
     local args="${1}"
     local last="${args##* }"
-    echo ">>>${last}<<<" >&2
-    for var in "${!BM_@}"; do echo "${var}"; done | fzf -1 -0 -q "${last}"
+    for var in "${!BM_@}"; do echo "${var}"; done | _fzf_ "${last}"
 }
 
 _complete_run_() {
@@ -291,6 +305,7 @@ _init_() {
     bind -x '"\t":"_complete_"'
 }
 
+_check_deps_
 _init_
 _greeting_
 
