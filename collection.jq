@@ -5,11 +5,11 @@ def leaf($name):
         "    BM_METHOD=" + (.request.method | quote),
         "    BM_HEADER=" + ("(" + ([.request.header[] | ((.key + ": " + .value) | vars | quote)] | join(" ")) + ")"),
         if .request | has("body") then
-            "    BM_BODY=$(cat <<-END_OF_BODY\n\(((.request.body.raw | vars) + "\nEND_OF_BODY\n") | tab))"
+            "    BM_BODY='" + (.request.body.raw | vars) + "'"
         else
             empty
         end,
-        "    BM_URL=" + (.request.url.raw | vars | quote)
+        "    BM_URL='" + (.request.url.raw | vars) + "'"
        ] | join("\n") + "\n")
     + ("}\n");
 def item($prefix):
@@ -23,9 +23,9 @@ def item($prefix):
 (
     .info
         | ( ""
-          + "BM_COLLECTION_NAME=" + (.name | @sh) + "\n"
-          + "BM_COLLECTION_DESCRIPTION=" + (.description | @sh) + "\n"
-          + "BM_COLLECTION_SCHEMA=" + (.schema | @sh) + "\n"
+          + "_BM_COLLECTION_NAME_=" + (.name | @sh) + "\n"
+          + "_BM_COLLECTION_DESCRIPTION_=" + (.description | @sh) + "\n"
+          + "_BM_COLLECTION_SCHEMA_=" + (.schema | @sh) + "\n"
           )
 )
 + "\n" +

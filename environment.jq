@@ -2,7 +2,7 @@ include "common" ;
 ( "#!/usr/bin/env bash\n" )
 + "\n" +
 (
-    "BM_ENVIRONMENT_NAME=" + (.name | @sh) + "\n"
+    "_BM_ENVIRONMENT_NAME_=" + (.name | @sh) + "\n"
 )
 + "\n" +
 (

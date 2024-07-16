@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 
 set -o emacs
+shopt -s patsub_replacement
 
 BASHMAN_HOME="$(cd $(dirname $(realpath $0)) && pwd)"
 BASHMAN_HISTORY="${PWD}/.bashman_history"
@@ -20,11 +21,13 @@ _greeting_() {
 _help_() {
     cat <<-END_OF_HELP
 	${nl}
+	Usage:  command [options] [args] [> file]
+	${nl}
 	Available commands:
 	  help                        Shows help
 	  status                      Shows current environment, collection etc.
-	  collection [opts] [file]    Loads a given Postman collection file
-	                                 or reloads the current one
+	  collection [opts] [file]    Loads a given Postman collection file or
+	                              reloads the current one
 	  environment [opts] [file]   Loads a given Postman environment file
 	                              or reloads the current one
 	  item [name]                 Selects the item or reloads the current one
@@ -32,6 +35,8 @@ _help_() {
 	  get VAR ...                 Shows the values of the environment variables
 	  set VAR=VAL ...             Sets the values of the environment variables
 	  exec command ...            Executes an arbitrary Bash command
+	  export                      Produces a curl command based on the current
+	                              environment, collection and item
 	  quit                        Exits Bashman
 	${nl}
 	Options:
@@ -58,7 +63,7 @@ _help_() {
 _items_() {
     declare -F | awk '{print $3}' | grep -v '^_' | {
         if [[ -n $1 ]]; then
-            grep -q "${BM_ITEM}"
+            grep -q "${_BM_ITEM_}"
         else
             cat
         fi
@@ -118,6 +123,11 @@ _complete_run_() {
     _complete_item_ "${@}"
 }
 
+_complete_export_() {
+    local last="${1##* }"
+    sed -e 's/ /\n/g' <<< "-e --environment" | _fzf_ "^${last}"
+}
+
 _complete_() {
     local line="${READLINE_LINE:0:${READLINE_POINT}}"
     local cmd="${line%% *}"
@@ -137,6 +147,7 @@ _complete_() {
             r|run) cmd=run ;;
             g|get) cmd=set; ;;
             s|set) cmd=set; suffix="=" ;;
+            x|export) cmd=export ;;
             ?|status) cmd=status ;;
             h|help) cmd=help ;;
             q|quit) cmd=quit ;;
@@ -199,35 +210,37 @@ _load_() {
 _collection_() {
     unset -f $(_items_)
 
-    _load_ collection BM_COLLECTION "${@}"
+    _load_ collection _BM_COLLECTION_ "${@}"
 
-    if [[ -n "${BM_ITEM}" ]] && _items_ "${BM_ITEM}"; then
-        _item_ "${BM_ITEM}"
+    if [[ -n "${_BM_ITEM_}" ]] && _items_ "${_BM_ITEM_}"; then
+        _item_ "${_BM_ITEM_}"
     else
-        unset BM_ITEM
+        unset _BM_ITEM_
     fi
 }
 
 _environment_() {
-    _load_ environment BM_ENVIRONMENT "${@}"
+    _load_ environment _BM_ENVIRONMENT_ "${@}"
 
-    [[ -n "${BM_COLLECTION}" ]] && _collection_ "${BM_COLLECTION}"
-    [[ -n "${BM_ITEM}" ]] && _item_ "${BM_ITEM}"
+    [[ -n "${_BM_COLLECTION_}" ]] && _collection_ "${_BM_COLLECTION_}"
+    [[ -n "${_BM_ITEM_}" ]] && _item_ "${_BM_ITEM_}"
 }
 
 _item_() {
-    local item=${1:-${BM_ITEM}}
+    local item=${1:-${_BM_ITEM_}}
     [[ -z "${item}" ]] && { echo "No item selected." >&2; return 2; }
 
     _items_ "${item}" || { echo "Item not found." >&2; return 1; }
 
     unset BM_NAME BM_METHOD BM_HEADER BM_BODY BM_URL
-    unset BM_RESPONSE_BODY BM_RESPONSE_META BM_RESPONSE_CODE
+    unset _BM_RESPONSE_BODY_ _BM_RESPONSE_META_ _BM_RESPONSE_CODE_
 
-    ${item} && BM_ITEM="${item}"
+    ${item} && _BM_ITEM_="${item}"
 }
 
 _run_() {
+    __redirect__ _run_ "${@}" && return || true
+
     if [[ -n ${1} && ${1} != -* ]] && _items_ "${1}"; then
         _item_ "${1}"
         shift
@@ -245,36 +258,76 @@ _run_() {
         --silent \
         --write-out '\n%{json}' \
         --location \
-        --request "${BM_METHOD}" "${BM_URL}" \
+        --request "${BM_METHOD}" "$(eval 'echo "${BM_URL}"')" \
         --header @<(for header in "${BM_HEADER[@]}"; do echo "${header}"; done) \
         ${auth:-} \
         ${auth## } \
-        --data "${BM_BODY}" \
+        --data "$(eval 'echo "${BM_BODY}"')" \
         "${@}")
 
-    BM_RESPONSE_META=$(tail -n 1 <<< "${response}")
-    BM_RESPONSE_BODY=$(head -n -1 <<< "${response}")
-    BM_RESPONSE_CODE=$(jq .http_code <<< "${BM_RESPONSE_META}")
+    _BM_RESPONSE_META_=$(tail -n 1 <<< "${response}")
+    _BM_RESPONSE_BODY_=$(head -n -1 <<< "${response}")
+    _BM_RESPONSE_CODE_=$(jq .http_code <<< "${_BM_RESPONSE_META_}")
 
-    cat <<< "${BM_RESPONSE_BODY}"
+    cat <<< "${_BM_RESPONSE_BODY_}"
+}
+
+
+_export_() {
+    __redirect__ _export_ "${@}" && return || true
+
+    if [[ ${1} == '-e' || ${1} == '--environment' ]]; then
+        local vars="${!BM_*}"
+        [[ ${vars} ]] && declare -p -- ${vars} | cut -d ' ' -f 3-
+    else
+        local auth
+        case "${BM_AUTH_TYPE}" in
+	        basic)  auth="--basic -u '${BM_AUTH_USER}:${BM_AUTH_PASS}'" ;;
+	        digest) auth="--digest -u '${BM_AUTH_USER}:${BM_AUTH_PASS}'" ;;
+	        bearer) auth="--oauth2-bearer '${BM_AUTH_TOKEN}'" ;;
+	        apikey) auth="--header '${BM_AUTH_KEY}: ${BM_AUTH_VALUE}'" ;;
+        esac
+
+        echo $'\n' \
+	         "curl" $'\\\n' \
+             "  --silent" $'\\\n' \
+             "  --location" $'\\\n' \
+             "  --request ${BM_METHOD} '$(eval "echo \"${BM_URL}\"")'" $'\\\n' \
+	         "  ${auth}" $'\\\n' \
+             "${BM_HEADER[@]/*/  --header \'&\' $'\\\n'}" \
+             "  --data-raw '$(eval "echo \"${BM_BODY}\"")'" "${@}" \
+             $'\n'
+     fi
+}
+
+__redirect__() {
+    local func="${1}"; shift
+    local args=("${@}")
+    if [[ ${#args[@]} -gt 1 && ${args[-2]} == '>' ]]; then
+        local file="${args[-1]}"
+        unset args[-1] args[-1]
+        ${func} "${args[@]}" > "${file}"
+        return 0
+    fi
+    return 1
 }
 
 _status_() {
-    case "${BM_RESPONSE_CODE}" in
-        [23][0-9][0-9]) BM_RESPONSE_CODE="\e[92m${BM_RESPONSE_CODE}\e[0m"; ;;
-        [45][0-9][0-9]) BM_RESPONSE_CODE="\e[91m${BM_RESPONSE_CODE}\e[0m"; ;;
+    case "${_BM_RESPONSE_CODE_}" in
+        [23][0-9][0-9]) _BM_RESPONSE_CODE_="\e[92m${_BM_RESPONSE_CODE_}\e[0m"; ;;
+        [45][0-9][0-9]) _BM_RESPONSE_CODE_="\e[91m${_BM_RESPONSE_CODE_}\e[0m"; ;;
     esac
 
     echo ""
-    echo -e "Environment:   ${BM_ENVIRONMENT_NAME:-[n/a]}"
-    echo -e "Collection:    ${BM_COLLECTION_NAME:-[n/a]}"
-    echo -e "Item:          ${BM_ITEM:-[n/a]}"
-    echo -e "Last response: ${BM_RESPONSE_CODE:-[n/a]}"
+    echo -e "Environment:   ${_BM_ENVIRONMENT_NAME_:-[n/a]}"
+    echo -e "Collection:    ${_BM_COLLECTION_NAME_:-[n/a]}"
+    echo -e "Item:          ${_BM_ITEM_:-[n/a]}"
+    echo -e "Last response: ${_BM_RESPONSE_CODE_:-[n/a]}"
     echo ""
 }
 
 _get_() {
-    eval "declare -p -- ${@}" | sed 's/declare \(-[^ ]* *\)*//'
+    eval "declare -p -- ${@}" | cut -d ' ' -f 3-
 }
 
 _set_() {
@@ -282,15 +335,15 @@ _set_() {
 }
 
 _prompt_() {
-    local var_name=$1
+    local var_name=${1}
     _status_
     read -e -p "> " -a "${var_name}"
 }
 
 _reload_() {
-    [[ -n "${BM_ENVIRONMENT}" && -r "${BM_ENVIRONMENT}" ]] && _environment_ "${BM_ENVIRONMENT}"
-    [[ -n "${BM_COLLECTION}" && -r "${BM_COLLECTION}" ]] && _collection_ "${BM_COLLECTION}"
-    [[ -n "${BM_ITEM}" && -r "${BM_ITEM}" ]] && _item_ "${BM_ITEM}"
+    [[ -n "${_BM_ENVIRONMENT_}" && -r "${_BM_ENVIRONMENT_}" ]] && _environment_ "${_BM_ENVIRONMENT_}"
+    [[ -n "${_BM_COLLECTION_}" && -r "${_BM_COLLECTION_}" ]] && _collection_ "${_BM_COLLECTION_}"
+    [[ -n "${_BM_ITEM_}" && -r "${_BM_ITEM_}" ]] && _item_ "${_BM_ITEM_}"
 }
 
 _init_() {
@@ -305,30 +358,37 @@ _init_() {
     bind -x '"\t":"_complete_"'
 }
 
-_check_deps_
-_init_
-_greeting_
+__main__() {
+    __MAIN__=1
 
-while _prompt_ CMDLINE; do
-    history -s "${CMDLINE[*]}"
-    CMD=${CMDLINE[0]}
-    ARGS=("${CMDLINE[@]:1}")
-    case "${CMD}" in
-        e|environment) _environment_ "${ARGS[@]}" ;;
-        c|collection) _collection_ "${ARGS[@]}" ;;
-        i|item) _item_ "${ARGS[@]}" ;;
-        r|run) _run_ "${ARGS[@]}" ;;
-        g|get) _get_ "${ARGS[@]}";;
-        s|set) _set_ "${ARGS[@]}";;
-        x|exec) eval "${ARGS[*]}" ;;
-        ?|status) _status_ ;;
-        h|help) _help_ ;;
-        q|quit) break ;;
-        *=*) _set_ "${CMDLINE[@]}" ;;
-        "") continue ;;
-        *) echo "Unknown command: ${CMD}" >&2 ;;
-    esac
-    unset CMDLINE CMD ARGS
-done
+    _check_deps_
+    _init_
+    _greeting_
 
-history -w "${BASHMAN_HISTORY}"
+    while _prompt_ CMDLINE; do
+        history -s "${CMDLINE[*]}"
+        CMD=${CMDLINE[0]}
+        ARGS=("${CMDLINE[@]:1}")
+        case "${CMD}" in
+            e|environment) _environment_ "${ARGS[@]}" ;;
+            c|collection) _collection_ "${ARGS[@]}" ;;
+            i|item) _item_ "${ARGS[@]}" ;;
+            r|run) _run_ "${ARGS[@]}" ;;
+            g|get) _get_ "${ARGS[@]}";;
+            s|set) _set_ "${ARGS[@]}";;
+            x|export) _export_ "${ARGS[@]}" ;;
+            !|exec) eval "${ARGS[*]}" ;;
+            ?|status) _status_ ;;
+            h|help) _help_ ;;
+            q|quit) break ;;
+            *=*) _set_ "${CMDLINE[@]}" ;;
+            "") continue ;;
+            *) echo "Unknown command: ${CMD}" >&2 ;;
+        esac
+        unset CMDLINE CMD ARGS
+    done
+
+    history -w "${BASHMAN_HISTORY}"
+}
+
+[[ ${__MAIN__:-''} ]] || __main__ "$@"
