@@ -58,32 +58,10 @@ _help_() {
 	END_OF_HELP
 }
 
-## Utils
-
-_items_() {
-    declare -F | awk '{print $3}' | grep -v '^_' | {
-        if [[ -n $1 ]]; then
-            grep -q "${_BM_ITEM_}"
-        else
-            cat
-        fi
-    }
-}
-
-_check_deps_() {
-    which curl                   >/dev/null || { echo "curl not found. See: https://curl.se/" >&2; exit 1; }
-    which jq                     >/dev/null || { echo "jq not found. See: https://jqlang.github.io/jq/" >&2; exit 1; }
-    which fzf                    >/dev/null || { echo "fzf not found. See: https://junegunn.github.io/fzf/" >&2; exit 1; }
-    which ${BASHMAN_EDITOR% *}   >/dev/null || { echo "${BASHMAN_EDITOR} not found." >&2; exit 1; }
-    which ${BASHMAN_DIFFTOOL% *} >/dev/null || { echo "${BASHMAN_DIFFTOOL} not found." >&2; exit 1; }
-}
-
-_fzf_() { fzf --tac --cycle +s -1 -0 -q "$1"; }
-
 ## Completion
 
 _complete_cmd_() {
-    sed -e 's/ /\n/g' <<< "collection environment help item run get set status quit" | _fzf_ "^${1}"
+    sed -e 's/ /\n/g' <<< "collection environment help item run get set status quit" | __fzf__ "^${1}"
 }
 
 _complete_load_() {
@@ -92,9 +70,9 @@ _complete_load_() {
     local last="${line##* }"
 
     if [[ ${last} == -* ]]; then
-        sed -e 's/ /\n/g' <<< "-d --diff -e --edit -w --write" | _fzf_ "^${last}"
+        sed -e 's/ /\n/g' <<< "-d --diff -e --edit -w --write" | __fzf__ "^${last}"
     else
-        find ${BASHMAN_PATH//:/ } -name "*.postman_${type}.*" | sed -e "s#^${PWD}##" | _fzf_ "${last}"
+        find ${BASHMAN_PATH//:/ } -name "*.postman_${type}.*" | sed -e "s#^${PWD}##" | __fzf__ "${last}"
     fi
 }
 
@@ -109,14 +87,14 @@ _complete_environment_() {
 _complete_item_() {
     local args="${1}"
     local last="${args##* }"
-    _items_ | _fzf_ "${last}"
+    __items__ | __fzf__ "${last}"
 }
 
 _complete_set_() {
     local var
     local args="${1}"
     local last="${args##* }"
-    for var in "${!BM_@}"; do echo "${var}"; done | _fzf_ "${last}"
+    for var in "${!BM_@}"; do echo "${var}"; done | __fzf__ "${last}"
 }
 
 _complete_run_() {
@@ -125,7 +103,7 @@ _complete_run_() {
 
 _complete_export_() {
     local last="${1##* }"
-    sed -e 's/ /\n/g' <<< "-e --environment" | _fzf_ "^${last}"
+    sed -e 's/ /\n/g' <<< "-e --environment" | __fzf__ "^${last}"
 }
 
 _complete_() {
@@ -208,11 +186,11 @@ _load_() {
 }
 
 _collection_() {
-    unset -f $(_items_)
+    unset -f $(__items__)
 
     _load_ collection _BM_COLLECTION_ "${@}"
 
-    if [[ -n "${_BM_ITEM_}" ]] && _items_ "${_BM_ITEM_}"; then
+    if [[ -n "${_BM_ITEM_}" ]] && __items__ "${_BM_ITEM_}"; then
         _item_ "${_BM_ITEM_}"
     else
         unset _BM_ITEM_
@@ -230,7 +208,7 @@ _item_() {
     local item=${1:-${_BM_ITEM_}}
     [[ -z "${item}" ]] && { echo "No item selected." >&2; return 2; }
 
-    _items_ "${item}" || { echo "Item not found." >&2; return 1; }
+    __items__ "${item}" || { echo "Item not found." >&2; return 1; }
 
     unset BM_NAME BM_METHOD BM_HEADER BM_BODY BM_URL
     unset _BM_RESPONSE_BODY_ _BM_RESPONSE_META_ _BM_RESPONSE_CODE_
@@ -241,7 +219,7 @@ _item_() {
 _run_() {
     __redirect__ _run_ "${@}" && return || true
 
-    if [[ -n ${1} && ${1} != -* ]] && _items_ "${1}"; then
+    if [[ -n ${1} && ${1} != -* ]] && __items__ "${1}"; then
         _item_ "${1}"
         shift
     fi
@@ -258,7 +236,7 @@ _run_() {
         --silent \
         --write-out '\n%{json}' \
         --location \
-        --request "${BM_METHOD}" "$(eval 'echo "${BM_URL}"')" \
+        --request "${BM_METHOD}" "$(eval "echo \"${BM_URL}\"")" \
         --header @<(for header in "${BM_HEADER[@]}"; do echo "${header}"; done) \
         ${auth:-} \
         ${auth## } \
@@ -286,30 +264,19 @@ _export_() {
 	        digest) auth="--digest -u '${BM_AUTH_USER}:${BM_AUTH_PASS}'" ;;
 	        bearer) auth="--oauth2-bearer '${BM_AUTH_TOKEN}'" ;;
 	        apikey) auth="--header '${BM_AUTH_KEY}: ${BM_AUTH_VALUE}'" ;;
+            *)      auth="--anyauth" ;;
         esac
 
         echo $'\n' \
-	         "curl" $'\\\n' \
-             "  --silent" $'\\\n' \
-             "  --location" $'\\\n' \
-             "  --request ${BM_METHOD} '$(eval "echo \"${BM_URL}\"")'" $'\\\n' \
-	         "  ${auth}" $'\\\n' \
-             "${BM_HEADER[@]/*/  --header \'&\' $'\\\n'}" \
-             "  --data-raw '$(eval "echo \"${BM_BODY}\"")'" "${@}" \
+             "curl" $'\\\n' \
+             "  --silent" $'\\\n'\
+             "  --location" $'\\\n'\
+             "  --request ${BM_METHOD} '$(eval "echo -n \"${BM_URL}\"")'" $'\\\n'\
+	         "  ${auth}" $'\\\n'\
+             "${BM_HEADER[@]/*/  --header \'&\' $'\\\n'}"\
+             "  --data-raw '$(eval "echo -n \"${BM_BODY}\"")'" "${@}"\
              $'\n'
      fi
-}
-
-__redirect__() {
-    local func="${1}"; shift
-    local args=("${@}")
-    if [[ ${#args[@]} -gt 1 && ${args[-2]} == '>' ]]; then
-        local file="${args[-1]}"
-        unset args[-1] args[-1]
-        ${func} "${args[@]}" > "${file}"
-        return 0
-    fi
-    return 1
 }
 
 _status_() {
@@ -344,6 +311,42 @@ _reload_() {
     [[ -n "${_BM_ENVIRONMENT_}" && -r "${_BM_ENVIRONMENT_}" ]] && _environment_ "${_BM_ENVIRONMENT_}"
     [[ -n "${_BM_COLLECTION_}" && -r "${_BM_COLLECTION_}" ]] && _collection_ "${_BM_COLLECTION_}"
     [[ -n "${_BM_ITEM_}" && -r "${_BM_ITEM_}" ]] && _item_ "${_BM_ITEM_}"
+}
+
+## Utils
+
+__items__() {
+    declare -F | awk '{print $3}' | grep -v '^_' | {
+        if [[ -n $1 ]]; then
+            grep -q "${_BM_ITEM_}"
+        else
+            cat
+        fi
+    }
+}
+
+__fzf__() { fzf --tac --cycle +s -1 -0 -q "$1"; }
+
+__redirect__() {
+    local func="${1}"; shift
+    local args=("${@}")
+    if [[ ${#args[@]} -gt 1 && ${args[-2]} == '>' ]]; then
+        local file="${args[-1]}"
+        unset args[-1] args[-1]
+        ${func} "${args[@]}" > "${file}"
+        return 0
+    fi
+    return 1
+}
+
+# Main
+
+_check_deps_() {
+    which curl                   >/dev/null || { echo "curl not found. See: https://curl.se/" >&2; exit 1; }
+    which jq                     >/dev/null || { echo "jq not found. See: https://jqlang.github.io/jq/" >&2; exit 1; }
+    which fzf                    >/dev/null || { echo "fzf not found. See: https://junegunn.github.io/fzf/" >&2; exit 1; }
+    which ${BASHMAN_EDITOR% *}   >/dev/null || { echo "${BASHMAN_EDITOR} not found." >&2; exit 1; }
+    which ${BASHMAN_DIFFTOOL% *} >/dev/null || { echo "${BASHMAN_DIFFTOOL} not found." >&2; exit 1; }
 }
 
 _init_() {
