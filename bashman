@@ -39,11 +39,6 @@ _help_() {
 	                              environment, collection and item
 	  quit                        Exits Bashman
 	${nl}
-	Options:
-	  -d, --diff                  Compares new and existing file side by side
-	  -e, --edit                  Edits the file before loading
-	  -w, --write                 Saves the generated file as \${file/.json/.sh}
-	${nl}
 	Environment variables:
 	  BASHMAN_HOME                Directory containing all Bashman scripts
 	  BASHMAN_PATH                Colon-separated list of directories to
@@ -60,8 +55,28 @@ _help_() {
 
 ## Completion
 
+__complete_with_help__() {
+    local query="${1}"
+    local choice=$(__fzf__ "${query}")
+    local variants=(${choice% -- *})
+    echo "${variants[0]}"
+}
+
 _complete_cmd_() {
-    sed -e 's/ /\n/g' <<< "collection environment help item run get set status quit" | __fzf__ "^${1}"
+    local last="${1}"
+    __complete_with_help__ "^${last}" <<-EOF
+		collection      -- load or reload a Postman collection
+		environment     -- load or reload a Postman environment
+		help            -- show help
+		item            -- choose an item from the current collection
+		run             -- make a call based on the current state
+		export          -- export a call (default), environment or history
+		get             -- show environment variables
+		set             -- set environment variables
+		status          -- show current environment, collection etc.
+		exec            -- execute an arbitrary Bash command
+		quit            -- exit Bashman
+		EOF
 }
 
 _complete_load_() {
@@ -70,7 +85,11 @@ _complete_load_() {
     local last="${line##* }"
 
     if [[ ${last} == -* ]]; then
-        sed -e 's/ /\n/g' <<< "-d --diff -e --edit -w --write" | __fzf__ "^${last}"
+        __complete_with_help__ "'${last}" <<-EOF
+			--diff      -d  -- compare side-by-side
+			--edit      -e  -- edit before loading
+			--write     -w  -- write the output to a file
+			EOF
     else
         find ${BASHMAN_PATH//:/ } -name "*.postman_${type}.*" | sed -e "s#^${PWD}##" | __fzf__ "${last}"
     fi
@@ -103,7 +122,11 @@ _complete_run_() {
 
 _complete_export_() {
     local last="${1##* }"
-    sed -e 's/ /\n/g' <<< "-e --environment" | __fzf__ "^${last}"
+    __complete_with_help__ "'${last}" <<-EOF
+		--environment       -e  -- environment variables
+		--history=recent    -h  -- commands entered in the current session
+		--history=full      -H  -- entire command history
+		EOF
 }
 
 _complete_() {
@@ -257,6 +280,10 @@ _export_() {
     if [[ ${1} == '-e' || ${1} == '--environment' ]]; then
         local vars="${!BM_*}"
         [[ ${vars} ]] && declare -p -- ${vars} | cut -d ' ' -f 3-
+    elif [[ ${1} == '-h' || ${1} == '--history=recent' ]]; then
+        history | sed -e 's/ *[0-9]\+ *//'
+    elif [[ ${1} == '-H' || ${1} == '--history=full' ]]; then
+        history | tail -n +$(_BM_INITIAL_HISTORY_SIZE_ + 1) | sed -e 's/ *[0-9]\+ *//'
     else
         local auth
         case "${BM_AUTH_TYPE}" in
@@ -302,9 +329,12 @@ _set_() {
 }
 
 _prompt_() {
-    local var_name=${1}
+    local var_name="${1}"
+    local -n var="${var_name}"
     _status_
-    read -e -p "> " -a "${var_name}"
+    while read -r -e -p "> " -a "${var_name}"; do
+        [[ -z "${var}" || "${var}" = '#'* ]] || break
+    done
 }
 
 _reload_() {
@@ -355,6 +385,7 @@ _init_() {
 
     touch "${BASHMAN_HISTORY}"
     history -r "${BASHMAN_HISTORY}"
+    _BM_INITIAL_HISTORY_SIZE_=$(history | wc -l)
 
     _reload_
 
@@ -367,6 +398,8 @@ __main__() {
     _check_deps_
     _init_
     _greeting_
+
+    local CMDLINE CMD ARGS
 
     while _prompt_ CMDLINE; do
         history -s "${CMDLINE[*]}"
@@ -385,7 +418,6 @@ __main__() {
             h|help) _help_ ;;
             q|quit) break ;;
             *=*) _set_ "${CMDLINE[@]}" ;;
-            "") continue ;;
             *) echo "Unknown command: ${CMD}" >&2 ;;
         esac
         unset CMDLINE CMD ARGS
