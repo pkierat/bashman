@@ -26,29 +26,9 @@ $ cd bashman
 $ ./bashman
 ```
 
-## Use
+## Usage
 
-1. Load a proper environment:
-   ```
-   [env]:[col]:[item]:[code]> env ~/projects/pet-shop/postman/localhost.postman_environment.json
-   localhost:[col]:[item]:[code]>
-   ```
-2. Load a collection:
-   ```
-   localhost:[col]:[item]:[code]> load ~/pet-shop/postman/pet-shop.postman_collection.json
-   localhost:pet-shop:[item]:[code]>
-   ```
-3. Choose an item:
-   ```
-   localhost:pet-shop:[item]:[code]> item get_parrots_by_color
-   localhost:pet-shop:get_parrots_by_color:[code]>
-   ```
-4. Make a call:
-   ```
-   localhost:pet-shop:get_parrots_by_color:[code]> run -v
-   [{...},{...}, ...]
-   localhost:pet-shop:get_parrots_by_color:[200]>
-   ```
+![Demo](demo.gif)
 
 ## Hints
 
